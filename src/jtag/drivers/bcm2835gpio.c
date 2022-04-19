@@ -60,6 +60,8 @@ static int bcm2835gpio_swd_write(int swclk, int swdio);
 static int bcm2835gpio_init(void);
 static int bcm2835gpio_quit(void);
 
+static int is_gpio_valid(int gpio);
+
 static struct bitbang_interface bcm2835gpio_bitbang = {
 	.read = bcm2835gpio_read,
 	.write = bcm2835gpio_write,
@@ -133,12 +135,12 @@ static int bcm2835gpio_reset(int trst, int srst)
 	uint32_t set = 0;
 	uint32_t clear = 0;
 
-	if (trst_gpio > 0) {
+	if (is_gpio_valid(trst_gpio)) {
 		set |= !trst<<trst_gpio;
 		clear |= trst<<trst_gpio;
 	}
 
-	if (srst_gpio > 0) {
+	if (is_gpio_valid(srst_gpio)) {
 		set |= !srst<<srst_gpio;
 		clear |= srst<<srst_gpio;
 	}
@@ -151,7 +153,7 @@ static int bcm2835gpio_reset(int trst, int srst)
 
 static void bcm2835_swdio_drive(bool is_output)
 {
-	if (swdio_dir_gpio > 0) {
+	if (is_gpio_valid(swdio_dir_gpio)) {
 		if (is_output) {
 			GPIO_SET = 1 << swdio_dir_gpio;
 			OUT_GPIO(swdio_gpio);
@@ -557,7 +559,7 @@ static int bcm2835gpio_init(void)
 		OUT_GPIO(tck_gpio);
 		OUT_GPIO(tms_gpio);
 
-		if (trst_gpio != -1) {
+		if (is_gpio_valid(trst_gpio)) {
 			trst_gpio_mode = MODE_GPIO(trst_gpio);
 			GPIO_SET = 1 << trst_gpio;
 			OUT_GPIO(trst_gpio);
@@ -566,7 +568,7 @@ static int bcm2835gpio_init(void)
 
 	if (transport_is_swd()) {
 		/* Make buffer an output before the GPIO connected to it */
-		if (swdio_dir_gpio != -1) {
+		if (is_gpio_valid(swdio_dir_gpio)) {
 			swdio_dir_gpio_mode = MODE_GPIO(swdio_dir_gpio);
 			GPIO_SET = 1 << swdio_dir_gpio;
 			OUT_GPIO(swdio_dir_gpio);
@@ -581,10 +583,16 @@ static int bcm2835gpio_init(void)
 		OUT_GPIO(swdio_gpio);
 	}
 
-	if (srst_gpio != -1) {
+	if (is_gpio_valid(srst_gpio)) {
 		srst_gpio_mode = MODE_GPIO(srst_gpio);
 		GPIO_SET = 1 << srst_gpio;
 		OUT_GPIO(srst_gpio);
+	}
+
+	if (swdio_dir_gpio != -1) {
+		swdio_dir_gpio_mode = MODE_GPIO(swdio_dir_gpio);
+		GPIO_SET = 1 << swdio_dir_gpio;
+		OUT_GPIO(swdio_dir_gpio);
 	}
 
 	LOG_DEBUG("saved pinmux settings: tck %d tms %d tdi %d "
@@ -601,7 +609,7 @@ static int bcm2835gpio_quit(void)
 		SET_MODE_GPIO(tdi_gpio, tdi_gpio_mode);
 		SET_MODE_GPIO(tck_gpio, tck_gpio_mode);
 		SET_MODE_GPIO(tms_gpio, tms_gpio_mode);
-		if (trst_gpio != -1)
+		if (is_gpio_valid(trst_gpio))
 			SET_MODE_GPIO(trst_gpio, trst_gpio_mode);
 	}
 
@@ -610,10 +618,10 @@ static int bcm2835gpio_quit(void)
 		SET_MODE_GPIO(swdio_gpio, swdio_gpio_mode);
 	}
 
-	if (srst_gpio != -1)
+	if (is_gpio_valid(srst_gpio))
 		SET_MODE_GPIO(srst_gpio, srst_gpio_mode);
 
-	if (swdio_dir_gpio != -1)
+	if (is_gpio_valid(swdio_dir_gpio))
 		SET_MODE_GPIO(swdio_dir_gpio, swdio_dir_gpio_mode);
 
 	return ERROR_OK;
