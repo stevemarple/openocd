@@ -151,7 +151,7 @@ static int bcm2835gpio_reset(int trst, int srst)
 
 static void bcm2835_swdio_drive(bool is_output)
 {
-	if (swdio_dir_gpio > 0) {
+	if (swdio_dir_gpio != -1) {
 		if (is_output) {
 			GPIO_SET = 1 << swdio_dir_gpio;
 			OUT_GPIO(swdio_gpio);
