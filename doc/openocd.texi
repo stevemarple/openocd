@@ -2434,7 +2434,11 @@ JTAG transport signals
 @item @option{swdio}, @option{swclk}: SWD transport signals
 @item @option{swdio_dir}: optional swdio buffer control signal
 @item @option{srst}: system reset signal
+@item @option{srst_sense}: optional input to sense when system reset signal is
+asserted
 @item @option{led}: optional activity led
+@item @option{pwr_ctrl}: optional output to enable power to the target
+@item @option{pwr_sense}: optional input to sense target power loss
 
 @end itemize
 

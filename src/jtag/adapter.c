@@ -68,6 +68,9 @@ static const struct gpio_map {
 	[ADAPTER_GPIO_IDX_TRST] = { "trst", ADAPTER_GPIO_DIRECTION_OUTPUT, false, true, },
 	[ADAPTER_GPIO_IDX_SRST] = { "srst", ADAPTER_GPIO_DIRECTION_OUTPUT, false, true, },
 	[ADAPTER_GPIO_IDX_LED] = { "led", ADAPTER_GPIO_DIRECTION_OUTPUT, true, true, },
+	[ADAPTER_GPIO_IDX_PWR_CTRL] = { "pwr_ctrl", ADAPTER_GPIO_DIRECTION_OUTPUT, true, true, },
+	[ADAPTER_GPIO_IDX_PWR_SENSE] = { "pwr_sense", ADAPTER_GPIO_DIRECTION_INPUT, false, false, },
+	[ADAPTER_GPIO_IDX_SRST_SENSE] = { "srst_sense", ADAPTER_GPIO_DIRECTION_INPUT, false, false, },
 };
 
 bool is_adapter_initialized(void)
@@ -108,10 +111,14 @@ static void adapter_driver_gpios_init(void)
 	 * lines so should be the default. */
 	adapter_config.gpios[ADAPTER_GPIO_IDX_SRST].active_low = true;
 	adapter_config.gpios[ADAPTER_GPIO_IDX_TRST].active_low = true;
+	adapter_config.gpios[ADAPTER_GPIO_IDX_PWR_SENSE].active_low = true;
+	adapter_config.gpios[ADAPTER_GPIO_IDX_SRST_SENSE].active_low = true;
 	sync_adapter_reset_with_gpios();
 
 	/* JTAG GPIOs should be inactive except for tms */
 	adapter_config.gpios[ADAPTER_GPIO_IDX_TMS].init_state = ADAPTER_GPIO_INIT_STATE_ACTIVE;
+
+	adapter_config.gpios[ADAPTER_GPIO_IDX_PWR_CTRL].init_state = ADAPTER_GPIO_INIT_STATE_ACTIVE;
 
 	adapter_config.gpios_initialized = true;
 }
@@ -1169,7 +1176,7 @@ static const struct command_registration adapter_command_handlers[] = {
 		.handler = adapter_gpio_config_handler,
 		.mode = COMMAND_CONFIG,
 		.help = "gpio adapter command group",
-		.usage = "[ tdo|tdi|tms|tck|trst|swdio|swdio_dir|swclk|srst|led"
+		.usage = "[ tdo|tdi|tms|tck|trst|swdio|swdio_dir|swclk|srst|led|pwr_ctrl|pwr_sense|srst_sense"
 			"[gpio_number] "
 			"[-chip chip_number] "
 			"[-active-high|-active-low] "
