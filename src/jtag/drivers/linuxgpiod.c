@@ -19,6 +19,7 @@
 #include <transport/transport.h>
 #include "bitbang.h"
 
+static const char *consumer = "OpenOCD";
 static struct gpiod_chip *gpiod_chip[ADAPTER_GPIO_IDX_NUM] = {};
 static struct gpiod_line *gpiod_line[ADAPTER_GPIO_IDX_NUM] = {};
 
@@ -136,11 +137,11 @@ static void linuxgpiod_swdio_drive(bool is_output)
 			if (retval < 0)
 				LOG_WARNING("Fail set swdio_dir");
 		}
-		retval = gpiod_line_request_output(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], "OpenOCD", 1);
+		retval = gpiod_line_request_output(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], consumer, 1);
 		if (retval < 0)
 			LOG_WARNING("Fail request_output line swdio");
 	} else {
-		retval = gpiod_line_request_input(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], "OpenOCD");
+		retval = gpiod_line_request_input(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], consumer);
 		if (retval < 0)
 			LOG_WARNING("Fail request_input line swdio");
 		if (gpiod_line[ADAPTER_GPIO_IDX_SWDIO_DIR]) {
@@ -348,12 +349,19 @@ int helper_get_line(enum adapter_gpio_config_index idx)
 		flags |= GPIOD_LINE_REQUEST_FLAG_ACTIVE_LOW;
 
 	struct gpiod_line_request_config config = {
-		.consumer = "OpenOCD",
+		.consumer = consumer,
 		.request_type = dir,
 		.flags = flags,
 	};
 
-	retval = gpiod_line_request(gpiod_line[idx], &config, val);
+	if (idx == ADAPTER_GPIO_IDX_PWR_SENSE || idx == ADAPTER_GPIO_IDX_SRST_SENSE) {
+		if (adapter_gpio_config[idx].active_low)
+			retval = gpiod_line_request_falling_edge_events(gpiod_line[idx], consumer);
+		else
+			retval = gpiod_line_request_rising_edge_events(gpiod_line[idx], consumer);
+	} else {
+		retval = gpiod_line_request(gpiod_line[idx], &config, val);
+	}
 	if (retval < 0) {
 		LOG_ERROR("Error requesting gpio line %s", adapter_gpio_get_name(idx));
 		return ERROR_JTAG_INIT_FAILED;
@@ -427,6 +435,38 @@ out_error:
 	return ERROR_JTAG_INIT_FAILED;
 }
 
+static int linuxgpiod_line_sense(enum adapter_gpio_config_index idx, int *sensed)
+{
+	if (!is_gpio_config_valid(idx)) {
+		*sensed = 0;
+		return ERROR_OK;
+	}
+
+	/* Check if any events occurred since last time; read out all. */
+	int num_events = 0;
+	bool events_sensed = false;
+	do {
+		const int max_num_events = 2;
+		struct gpiod_line_event events[max_num_events];
+		num_events = gpiod_line_event_read_multiple(gpiod_line[idx], &events[0], max_num_events);
+		if (num_events > 0)
+			events_sensed = true;
+	} while (num_events > 0);
+
+	*sensed = events_sensed ? 1 : 0;
+	return ERROR_OK;
+}
+
+static int linuxgpiod_power_dropout(int *power_dropout)
+{
+	return linuxgpiod_line_sense(ADAPTER_GPIO_IDX_PWR_SENSE, power_dropout);
+}
+
+static int linuxgpiod_srst_asserted(int *srst_asserted)
+{
+	return linuxgpiod_line_sense(ADAPTER_GPIO_IDX_SRST_SENSE, srst_asserted);
+}
+
 static const char *const linuxgpiod_transport[] = { "swd", "jtag", NULL };
 
 static struct jtag_interface linuxgpiod_interface = {
@@ -441,6 +481,8 @@ struct adapter_driver linuxgpiod_adapter_driver = {
 	.init = linuxgpiod_init,
 	.quit = linuxgpiod_quit,
 	.reset = linuxgpiod_reset,
+	.power_dropout = linuxgpiod_power_dropout,
+	.srst_asserted = linuxgpiod_srst_asserted,
 
 	.jtag_ops = &linuxgpiod_interface,
 	.swd_ops = &bitbang_swd,
