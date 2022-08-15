@@ -19,6 +19,9 @@
 #include <transport/transport.h>
 #include "bitbang.h"
 
+#define LOG_PREFIX "linuxgpiod: "
+
+static const char *consumer = "OpenOCD";
 static struct gpiod_chip *gpiod_chip[ADAPTER_GPIO_IDX_NUM] = {};
 static struct gpiod_line *gpiod_line[ADAPTER_GPIO_IDX_NUM] = {};
 
@@ -50,7 +53,7 @@ static bb_value_t linuxgpiod_read(void)
 
 	retval = gpiod_line_get_value(gpiod_line[ADAPTER_GPIO_IDX_TDO]);
 	if (retval < 0) {
-		LOG_WARNING("reading tdo failed");
+		LOG_WARNING(LOG_PREFIX "reading tdo failed");
 		return 0;
 	}
 
@@ -83,20 +86,20 @@ static int linuxgpiod_write(int tck, int tms, int tdi)
 	if (tdi != last_tdi) {
 		retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_TDI], tdi);
 		if (retval < 0)
-			LOG_WARNING("writing tdi failed");
+			LOG_WARNING(LOG_PREFIX "writing tdi failed");
 	}
 
 	if (tms != last_tms) {
 		retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_TMS], tms);
 		if (retval < 0)
-			LOG_WARNING("writing tms failed");
+			LOG_WARNING(LOG_PREFIX "writing tms failed");
 	}
 
 	/* write clk last */
 	if (tck != last_tck) {
 		retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_TCK], tck);
 		if (retval < 0)
-			LOG_WARNING("writing tck failed");
+			LOG_WARNING(LOG_PREFIX "writing tck failed");
 	}
 
 	last_tdi = tdi;
@@ -112,7 +115,7 @@ static int linuxgpiod_swdio_read(void)
 
 	retval = gpiod_line_get_value(gpiod_line[ADAPTER_GPIO_IDX_SWDIO]);
 	if (retval < 0) {
-		LOG_WARNING("Fail read swdio");
+		LOG_WARNING(LOG_PREFIX "Fail read swdio");
 		return 0;
 	}
 
@@ -134,19 +137,19 @@ static void linuxgpiod_swdio_drive(bool is_output)
 		if (gpiod_line[ADAPTER_GPIO_IDX_SWDIO_DIR]) {
 			retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_SWDIO_DIR], 1);
 			if (retval < 0)
-				LOG_WARNING("Fail set swdio_dir");
+				LOG_WARNING(LOG_PREFIX "Fail set swdio_dir");
 		}
-		retval = gpiod_line_request_output(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], "OpenOCD", 1);
+		retval = gpiod_line_request_output(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], consumer, 1);
 		if (retval < 0)
-			LOG_WARNING("Fail request_output line swdio");
+			LOG_WARNING(LOG_PREFIX "Fail request_output line swdio");
 	} else {
-		retval = gpiod_line_request_input(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], "OpenOCD");
+		retval = gpiod_line_request_input(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], consumer);
 		if (retval < 0)
-			LOG_WARNING("Fail request_input line swdio");
+			LOG_WARNING(LOG_PREFIX "Fail request_input line swdio");
 		if (gpiod_line[ADAPTER_GPIO_IDX_SWDIO_DIR]) {
 			retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_SWDIO_DIR], 0);
 			if (retval < 0)
-				LOG_WARNING("Fail set swdio_dir");
+				LOG_WARNING(LOG_PREFIX "Fail set swdio_dir");
 		}
 	}
 
@@ -162,7 +165,7 @@ static int linuxgpiod_swd_write(int swclk, int swdio)
 		if (!last_stored || (swdio != last_swdio)) {
 			retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_SWDIO], swdio);
 			if (retval < 0)
-				LOG_WARNING("Fail set swdio");
+				LOG_WARNING(LOG_PREFIX "Fail set swdio");
 		}
 	}
 
@@ -170,7 +173,7 @@ static int linuxgpiod_swd_write(int swclk, int swdio)
 	if (!last_stored || (swclk != last_swclk)) {
 		retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_SWCLK], swclk);
 		if (retval < 0)
-			LOG_WARNING("Fail set swclk");
+			LOG_WARNING(LOG_PREFIX "Fail set swclk");
 	}
 
 	last_swdio = swdio;
@@ -189,7 +192,7 @@ static int linuxgpiod_blink(int on)
 
 	retval = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_LED], on);
 	if (retval < 0)
-		LOG_WARNING("Fail set led");
+		LOG_WARNING(LOG_PREFIX "Fail set led");
 	return retval;
 }
 
@@ -211,7 +214,7 @@ static int linuxgpiod_reset(int trst, int srst)
 {
 	int retval1 = 0, retval2 = 0;
 
-	LOG_DEBUG("linuxgpiod_reset");
+	LOG_DEBUG(LOG_PREFIX "linuxgpiod_reset");
 
 	/*
 	 * active low behaviour handled by "adaptor gpio" command and
@@ -220,13 +223,13 @@ static int linuxgpiod_reset(int trst, int srst)
 	if (gpiod_line[ADAPTER_GPIO_IDX_SRST]) {
 		retval1 = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_SRST], srst);
 		if (retval1 < 0)
-			LOG_WARNING("set srst value failed");
+			LOG_WARNING(LOG_PREFIX "set srst value failed");
 	}
 
 	if (gpiod_line[ADAPTER_GPIO_IDX_TRST]) {
 		retval2 = gpiod_line_set_value(gpiod_line[ADAPTER_GPIO_IDX_TRST], trst);
 		if (retval2 < 0)
-			LOG_WARNING("set trst value failed");
+			LOG_WARNING(LOG_PREFIX "set trst value failed");
 	}
 
 	return ((retval1 < 0) || (retval2 < 0)) ? ERROR_FAIL : ERROR_OK;
@@ -268,7 +271,7 @@ static inline void helper_release(enum adapter_gpio_config_index idx)
 
 static int linuxgpiod_quit(void)
 {
-	LOG_DEBUG("linuxgpiod_quit");
+	LOG_DEBUG(LOG_PREFIX "linuxgpiod_quit");
 	for (int i = 0; i < ADAPTER_GPIO_IDX_NUM; ++i)
 		helper_release(i);
 
@@ -280,34 +283,36 @@ int helper_get_line(enum adapter_gpio_config_index idx)
 	if (!is_gpio_config_valid(idx))
 		return ERROR_OK;
 
-	int dir = GPIOD_LINE_REQUEST_DIRECTION_INPUT, flags = 0, val = 0, retval;
+	int request_type = GPIOD_LINE_REQUEST_DIRECTION_INPUT, flags = 0, val = 0, retval;
 
 	gpiod_chip[idx] = gpiod_chip_open_by_number(adapter_gpio_config[idx].chip_num);
 	if (!gpiod_chip[idx]) {
-		LOG_ERROR("Cannot open LinuxGPIOD chip %d for %s", adapter_gpio_config[idx].chip_num,
+		LOG_ERROR(LOG_PREFIX "Cannot open LinuxGPIOD chip %d for %s", adapter_gpio_config[idx].chip_num,
 			adapter_gpio_get_name(idx));
 		return ERROR_JTAG_INIT_FAILED;
 	}
 
 	gpiod_line[idx] = gpiod_chip_get_line(gpiod_chip[idx], adapter_gpio_config[idx].gpio_num);
 	if (!gpiod_line[idx]) {
-		LOG_ERROR("Error get line %s", adapter_gpio_get_name(idx));
+		LOG_ERROR(LOG_PREFIX "Error get line %s", adapter_gpio_get_name(idx));
 		return ERROR_JTAG_INIT_FAILED;
 	}
 
 	switch (adapter_gpio_config[idx].init_state) {
 	case ADAPTER_GPIO_INIT_STATE_INPUT:
-		dir = GPIOD_LINE_REQUEST_DIRECTION_INPUT;
+		request_type = GPIOD_LINE_REQUEST_DIRECTION_INPUT;
 		break;
 	case ADAPTER_GPIO_INIT_STATE_INACTIVE:
-		dir = GPIOD_LINE_REQUEST_DIRECTION_OUTPUT;
+		request_type = GPIOD_LINE_REQUEST_DIRECTION_OUTPUT;
 		val = 0;
 		break;
 	case ADAPTER_GPIO_INIT_STATE_ACTIVE:
-		dir = GPIOD_LINE_REQUEST_DIRECTION_OUTPUT;
+		request_type = GPIOD_LINE_REQUEST_DIRECTION_OUTPUT;
 		val = 1;
 		break;
 	}
+	if (idx == ADAPTER_GPIO_IDX_PWR_SENSE || idx == ADAPTER_GPIO_IDX_SRST_SENSE)
+		request_type = GPIOD_LINE_REQUEST_EVENT_BOTH_EDGES;
 
 	switch (adapter_gpio_config[idx].drive) {
 	case ADAPTER_GPIO_DRIVE_MODE_PUSH_PULL:
@@ -330,7 +335,7 @@ int helper_get_line(enum adapter_gpio_config_index idx)
 #ifdef GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP
 		flags |= GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP;
 #else
-		LOG_WARNING("linuxgpiod: ignoring request for pull-up on %s: not supported by gpiod v%s",
+		LOG_WARNING(LOG_PREFIX "ignoring request for pull-up on %s: not supported by gpiod v%s",
 			adapter_gpio_get_name(idx), gpiod_version_string());
 #endif
 		break;
@@ -338,7 +343,7 @@ int helper_get_line(enum adapter_gpio_config_index idx)
 #ifdef GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_DOWN
 		flags |= GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_DOWN;
 #else
-		LOG_WARNING("linuxgpiod: ignoring request for pull-down on %s: not supported by gpiod v%s",
+		LOG_WARNING(LOG_PREFIX "ignoring request for pull-down on %s: not supported by gpiod v%s",
 			adapter_gpio_get_name(idx), gpiod_version_string());
 #endif
 		break;
@@ -348,14 +353,14 @@ int helper_get_line(enum adapter_gpio_config_index idx)
 		flags |= GPIOD_LINE_REQUEST_FLAG_ACTIVE_LOW;
 
 	struct gpiod_line_request_config config = {
-		.consumer = "OpenOCD",
-		.request_type = dir,
+		.consumer = consumer,
+		.request_type = request_type,
 		.flags = flags,
 	};
 
 	retval = gpiod_line_request(gpiod_line[idx], &config, val);
 	if (retval < 0) {
-		LOG_ERROR("Error requesting gpio line %s", adapter_gpio_get_name(idx));
+		LOG_ERROR(LOG_PREFIX "Error requesting gpio line %s", adapter_gpio_get_name(idx));
 		return ERROR_JTAG_INIT_FAILED;
 	}
 
@@ -369,6 +374,10 @@ static int linuxgpiod_init(void)
 	bitbang_interface = &linuxgpiod_bitbang;
 	adapter_gpio_config = adapter_gpio_get_config();
 
+	/* Apply power first */
+	if (helper_get_line(ADAPTER_GPIO_IDX_PWR_CTRL) != ERROR_OK)
+		goto out_error;
+
 	/*
 	 * Configure JTAG/SWD signals. Default directions and initial states are handled
 	 * by adapter.c and "adapter gpio" command.
@@ -376,7 +385,7 @@ static int linuxgpiod_init(void)
 
 	if (transport_is_jtag()) {
 		if (!linuxgpiod_jtag_mode_possible()) {
-			LOG_ERROR("Require tck, tms, tdi and tdo gpios for JTAG mode");
+			LOG_ERROR(LOG_PREFIX "Require tck, tms, tdi and tdo gpios for JTAG mode");
 			goto out_error;
 		}
 
@@ -391,7 +400,7 @@ static int linuxgpiod_init(void)
 	if (transport_is_swd()) {
 		int retval1, retval2;
 		if (!linuxgpiod_swd_mode_possible()) {
-			LOG_ERROR("Require swclk and swdio gpio for SWD mode");
+			LOG_ERROR(LOG_PREFIX "Require swclk and swdio gpio for SWD mode");
 			goto out_error;
 		}
 
@@ -416,7 +425,9 @@ static int linuxgpiod_init(void)
 	}
 
 	if (helper_get_line(ADAPTER_GPIO_IDX_SRST) != ERROR_OK ||
-		helper_get_line(ADAPTER_GPIO_IDX_LED) != ERROR_OK)
+		helper_get_line(ADAPTER_GPIO_IDX_LED) != ERROR_OK ||
+		helper_get_line(ADAPTER_GPIO_IDX_SRST_SENSE) != ERROR_OK ||
+		helper_get_line(ADAPTER_GPIO_IDX_PWR_SENSE) != ERROR_OK)
 			goto out_error;
 
 	return ERROR_OK;
@@ -425,6 +436,107 @@ out_error:
 	linuxgpiod_quit();
 
 	return ERROR_JTAG_INIT_FAILED;
+}
+
+/**
+ * @brief Sense changes on a line
+ *
+ * @param idx: GPIO to read
+ * @param asserted: flag inidcating if line is active, caller should maintain state between calls
+ * @param initialized: flag indicating if the asserted parameter has been initialized. Read the line if not.
+ * @return int
+ */
+static int linuxgpiod_line_sense(enum adapter_gpio_config_index idx, int *asserted, bool *initialized)
+{
+	if (!is_gpio_config_valid(idx)) {
+		*asserted = 0;
+		return ERROR_OK;
+	}
+
+	/* Check if any events occurred since last time; read out all. gpiod inverts
+	 * rising/falling edge when signal is active-low. */
+	int num_events = 0;
+	int num_assert_events = 0;
+	int num_deassert_events = 0;
+
+	while (true) {
+		const struct timespec timeout = {
+			.tv_sec = 0,
+			.tv_nsec = 0,
+		};
+		int r = gpiod_line_event_wait(gpiod_line[idx], &timeout);
+		if (r < 0) {
+			LOG_ERROR(LOG_PREFIX "gpiod_line_event_wait() failed for signal %s: %s",
+				adapter_gpio_get_name(idx), strerror(errno));
+			return ERROR_FAIL;
+		}
+		if (!r)
+			break;
+
+		const int max_num_events = 4;
+		struct gpiod_line_event events[max_num_events];
+		num_events = gpiod_line_event_read_multiple(gpiod_line[idx], events, max_num_events);
+		if (num_events < 0) {
+			LOG_ERROR(LOG_PREFIX "gpiod_line_event_read_multiple() failed for signal %s: %s",
+				adapter_gpio_get_name(idx), strerror(errno));
+			return ERROR_FAIL;
+		}
+
+		for (int i = 0; i < num_events; ++i) {
+			LOG_DEBUG(LOG_PREFIX "event type %d", events[i].event_type);
+			switch (events[i].event_type) {
+			case GPIOD_LINE_EVENT_RISING_EDGE:
+				++num_assert_events;
+				break;
+			case GPIOD_LINE_EVENT_FALLING_EDGE:
+				++num_deassert_events;
+				break;
+			}
+		}
+	}
+
+	/* The value of asserted is changed only if events were detected. Make it
+	 * the caller's responsibility to store the previous state. Then it is not
+	 * necessary to read the GPIO level after initialization. */
+	if (num_deassert_events)
+		*asserted = false;
+	if (num_assert_events || num_deassert_events > 1)
+		/* It has been observed that gpiod can return consecutive events of the
+		 * same type. If multiple deassert events were detected then there must
+		 * have been at least one assert event. */
+		*asserted = true;
+
+	if (!initialized) {
+		if (!num_assert_events && !num_deassert_events) {
+			int retval = gpiod_line_get_value(gpiod_line[idx]);
+			if (retval < 0) {
+				LOG_ERROR(LOG_PREFIX "reading %s failed: %s", adapter_gpio_get_name(idx), strerror(errno));
+				return ERROR_FAIL;
+			}
+			*asserted = (retval ? 1 : 0);
+		}
+		*initialized = true;
+	}
+
+	return ERROR_OK;
+}
+
+static int linuxgpiod_power_dropout(int *power_dropout)
+{
+	static int active;
+	static bool initialized;
+	int r = linuxgpiod_line_sense(ADAPTER_GPIO_IDX_PWR_SENSE, &active, &initialized);
+	*power_dropout = active;
+	return r;
+}
+
+static int linuxgpiod_srst_asserted(int *srst_asserted)
+{
+	static int active;
+	static bool initialized;
+	int r = linuxgpiod_line_sense(ADAPTER_GPIO_IDX_SRST_SENSE, &active, &initialized);
+	*srst_asserted = active;
+	return r;
 }
 
 static const char *const linuxgpiod_transport[] = { "swd", "jtag", NULL };
@@ -441,6 +553,8 @@ struct adapter_driver linuxgpiod_adapter_driver = {
 	.init = linuxgpiod_init,
 	.quit = linuxgpiod_quit,
 	.reset = linuxgpiod_reset,
+	.power_dropout = linuxgpiod_power_dropout,
+	.srst_asserted = linuxgpiod_srst_asserted,
 
 	.jtag_ops = &linuxgpiod_interface,
 	.swd_ops = &bitbang_swd,
