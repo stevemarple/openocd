@@ -51,7 +51,10 @@ static int speed_offset = 28;
 static unsigned int jtag_delay;
 
 static const struct adapter_gpio_config *adapter_gpio_config;
-static int initial_gpio_mode[ADAPTER_GPIO_IDX_NUM];
+static struct initial_gpio_state {
+	int mode;
+	int output_level;
+} initial_gpio_state[ADAPTER_GPIO_IDX_NUM];
 
 static bool is_gpio_config_valid(enum adapter_gpio_config_index idx)
 {
@@ -96,8 +99,15 @@ static void set_gpio_value(const struct adapter_gpio_config *gpio_config, int va
 
 static void restore_gpio(enum adapter_gpio_config_index idx)
 {
-	if (is_gpio_config_valid(idx))
-		SET_MODE_GPIO(adapter_gpio_config[idx].gpio_num, initial_gpio_mode[idx]);
+	if (is_gpio_config_valid(idx)) {
+		SET_MODE_GPIO(adapter_gpio_config[idx].gpio_num, initial_gpio_state[idx].mode);
+		if (initial_gpio_state[idx].mode == BCM2835_GPIO_MODE_OUTPUT) {
+			if (initial_gpio_state[idx].output_level)
+				GPIO_SET = 1 << adapter_gpio_config[idx].gpio_num;
+			else
+				GPIO_CLR = 1 << adapter_gpio_config[idx].gpio_num;
+		}
+	}
 }
 
 static void initialize_gpio(enum adapter_gpio_config_index idx)
@@ -105,10 +115,12 @@ static void initialize_gpio(enum adapter_gpio_config_index idx)
 	if (!is_gpio_config_valid(idx))
 		return;
 
-	initial_gpio_mode[idx] = MODE_GPIO(adapter_gpio_config[idx].gpio_num);
+	initial_gpio_state[idx].mode = MODE_GPIO(adapter_gpio_config[idx].gpio_num);
+	unsigned int shift = adapter_gpio_config[idx].gpio_num;
+	initial_gpio_state[idx].output_level = (GPIO_LEV >> shift) & 1;
 	LOG_DEBUG("saved GPIO mode for %s (GPIO %d %d): %d",
 			adapter_gpio_get_name(idx), adapter_gpio_config[idx].chip_num, adapter_gpio_config[idx].gpio_num,
-			initial_gpio_mode[idx]);
+			initial_gpio_state[idx].mode);
 
 	if (adapter_gpio_config[idx].pull != ADAPTER_GPIO_PULL_NONE) {
 		LOG_WARNING("BCM2835 GPIO does not support pull-up or pull-down settings (signal %s)",
