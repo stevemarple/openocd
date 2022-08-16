@@ -3299,8 +3299,16 @@ configuration on exit.
 GPIO numbers >= 32 can't be used for performance reasons. GPIO configuration is
 handled by the generic command @ref{adapter gpio, @command{adapter gpio}}.
 
-See @file{interface/raspberrypi-native.cfg} for a sample config and
-pinout.
+The driver supports the @command{adapter gpio pwr_ctrl}, @command{adapter gpio
+pwr_sense}, and @command{adapter gpio srst_sense} commands. When sensing inputs
+the BCM2835 GPIO peripheral should not generate interrupts as this may cause
+Linux to hang so be sure to include the line @samp{dtoverlay=gpio-no-irq} in the
+@file{/boot/config.txt} file. It is permissible to set the same chip and GPIO
+number for @samp{srst} and @samp{srst_sense} GPIOs although this is only
+sensible when the @samp{srst} GPIO drive mode is open-drain and the GPIO is
+unbuffered.
+
+See @file{interface/raspberrypi-native.cfg} for a sample config and pinout.
 
 @deffn {Config Command} {bcm2835gpio speed_coeffs} @var{speed_coeff} @var{speed_offset}
 Set SPEED_COEFF and SPEED_OFFSET for delay calculations. If unspecified,
@@ -3312,6 +3320,16 @@ Set the peripheral base register address to access GPIOs. For the RPi1, use
 0x20000000. For RPi2 and RPi3, use 0x3F000000. For RPi4, use 0xFE000000. A full
 list can be found in the
 @uref{https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md, official guide}.
+@end deffn
+
+@deffn {Config Command} {bcm2835gpio gpio_interrupts_file} @var{filename}
+Set the name of the device tree file listing the GPIO peripheral interrupts;
+defaults to @file{/sys/firmware/devicetree/base/soc/gpio@@7e200000/interrupts}.
+This file lists the interrupts used by the GPIO peripheral. Attempting to use
+the GPIO event detection features for @samp{srst} or power dropout sensing when
+the GPIO peripheral has interrupts enabled would cause conflicts with the
+operating system interrupt handling. The bcm2835 driver will not enable srst or
+power dropout sensing when this file is not empty.
 @end deffn
 
 @end deffn

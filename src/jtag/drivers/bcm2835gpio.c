@@ -18,6 +18,9 @@
 #include "bitbang.h"
 
 #include <sys/mman.h>
+#include <sys/stat.h>
+
+#define LOG_PREFIX "BCM2835 GPIO: "
 
 uint32_t bcm2835_peri_base = 0x20000000;
 #define BCM2835_GPIO_BASE	(bcm2835_peri_base + 0x200000) /* GPIO controller */
@@ -37,9 +40,24 @@ uint32_t bcm2835_peri_base = 0x20000000;
 		*(pio_base+((g)/10)) |=  ((m)<<(((g)%10)*3)); } while (0)
 #define OUT_GPIO(g) SET_MODE_GPIO(g, BCM2835_GPIO_MODE_OUTPUT)
 
+/* Register addresses are taken from "BCM2835 ARM Peripherals", Chapter 6
+ * General Purpose I/O (GPIO). Available from
+ * https://datasheets.raspberrypi.com/.
+ */
 #define GPIO_SET (*(pio_base+7))  /* sets   bits which are 1, ignores bits which are 0 */
 #define GPIO_CLR (*(pio_base+10)) /* clears bits which are 1, ignores bits which are 0 */
 #define GPIO_LEV (*(pio_base+13)) /* current level of the pin */
+#define GPIO_GPEDS0 (*(pio_base+16)) /* event detect status 0 */
+#define GPIO_GPREN0 (*(pio_base+19)) /* rising-edge detect enable 0 */
+#define GPIO_GPFEN0 (*(pio_base+22)) /* falling-edge detect enable 0 */
+#define GPIO_GPHEN0 (*(pio_base+25)) /* high detect enable 0 */
+#define GPIO_GPLEN0 (*(pio_base+28)) /* low detect enable 0 */
+#define GPIO_GPAREN0 (*(pio_base+31)) /* asynchronous rising-edge detection (0) */
+#define GPIO_GPAFEN0 (*(pio_base+34)) /* asynchronous falling-edge detection (0) */
+
+/* Device tree file containing the GPIO interrupts, empty when the gpio-no-irq overlay is loaded */
+#define DEFAULT_GPIO_INTERRUPTS_FILE "/sys/firmware/devicetree/base/soc/gpio@7e200000/interrupts"
+static char *gpio_interrupts_file;
 
 static int dev_mem_fd;
 static volatile uint32_t *pio_base = MAP_FAILED;
@@ -64,6 +82,25 @@ static bool is_gpio_config_valid(enum adapter_gpio_config_index idx)
 		&& adapter_gpio_config[idx].chip_num <= 0
 		&& adapter_gpio_config[idx].gpio_num >= 0
 		&& adapter_gpio_config[idx].gpio_num <= 31;
+}
+
+static bool is_same_gpio_pin(enum adapter_gpio_config_index idx1, enum adapter_gpio_config_index idx2)
+{
+	int chip1 = adapter_gpio_config[idx1].chip_num == -1 ? 0 : adapter_gpio_config[idx1].chip_num;
+	int chip2 = adapter_gpio_config[idx2].chip_num == -1 ? 0 : adapter_gpio_config[idx2].chip_num;
+	return chip1 == chip2 && adapter_gpio_config[idx1].gpio_num ==  adapter_gpio_config[idx2].gpio_num;
+}
+
+/* Test if the device tree overlay gpio-no-irq is loaded */
+static bool is_dto_gpio_no_irq_loaded(void)
+{
+	struct stat buf;
+	if (stat(gpio_interrupts_file ? gpio_interrupts_file : DEFAULT_GPIO_INTERRUPTS_FILE, &buf) != 0) {
+		LOG_ERROR(LOG_PREFIX "Could not stat %s: %s", gpio_interrupts_file, strerror(errno));
+		return false;
+	}
+
+	return buf.st_size == 0;
 }
 
 static void set_gpio_value(const struct adapter_gpio_config *gpio_config, int value)
@@ -100,20 +137,44 @@ static void set_gpio_value(const struct adapter_gpio_config *gpio_config, int va
 
 static void restore_gpio(enum adapter_gpio_config_index idx)
 {
-	if (is_gpio_config_valid(idx)) {
-		SET_MODE_GPIO(adapter_gpio_config[idx].gpio_num, initial_gpio_state[idx].mode);
-		if (initial_gpio_state[idx].mode == BCM2835_GPIO_MODE_OUTPUT) {
-			if (initial_gpio_state[idx].output_level)
-				GPIO_SET = 1 << adapter_gpio_config[idx].gpio_num;
-			else
-				GPIO_CLR = 1 << adapter_gpio_config[idx].gpio_num;
-		}
+	if (!is_gpio_config_valid(idx))
+		return;
+
+	bool srst_ctrl_also_senses = is_same_gpio_pin(ADAPTER_GPIO_IDX_SRST, ADAPTER_GPIO_IDX_SRST_SENSE);
+	if (idx == ADAPTER_GPIO_IDX_SRST_SENSE && srst_ctrl_also_senses)
+		return;
+
+	SET_MODE_GPIO(adapter_gpio_config[idx].gpio_num, initial_gpio_state[idx].mode);
+	if (initial_gpio_state[idx].mode == BCM2835_GPIO_MODE_OUTPUT) {
+		if (initial_gpio_state[idx].output_level)
+			GPIO_SET = 1 << adapter_gpio_config[idx].gpio_num;
+		else
+			GPIO_CLR = 1 << adapter_gpio_config[idx].gpio_num;
+	}
+
+	/* TODO: Fully restore detection settings for sense inputs. Is it worthwhile? */
+	if (idx == ADAPTER_GPIO_IDX_SRST_SENSE || idx == ADAPTER_GPIO_IDX_PWR_SENSE ||
+			(idx == ADAPTER_GPIO_IDX_SRST && srst_ctrl_also_senses)) {
+		uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+		/* Clear all edge and level detection for this GPIO. */
+		GPIO_GPREN0 &= ~mask;
+		GPIO_GPFEN0 &= ~mask;
+		GPIO_GPHEN0 &= ~mask;
+		GPIO_GPLEN0 &= ~mask;
+		GPIO_GPAREN0 &= ~mask;
+		GPIO_GPAFEN0 &= ~mask;
 	}
 }
 
 static void initialize_gpio(enum adapter_gpio_config_index idx)
 {
 	if (!is_gpio_config_valid(idx))
+		return;
+
+	/* Allow the same GPIO to be used for srst and srst_sense; only useful for
+	 * open-drain drive mode and when unbuffered. */
+	bool srst_ctrl_also_senses = is_same_gpio_pin(ADAPTER_GPIO_IDX_SRST, ADAPTER_GPIO_IDX_SRST_SENSE);
+	if (idx == ADAPTER_GPIO_IDX_SRST_SENSE && srst_ctrl_also_senses)
 		return;
 
 	initial_gpio_state[idx].mode = MODE_GPIO(adapter_gpio_config[idx].gpio_num);
@@ -138,6 +199,38 @@ static void initialize_gpio(enum adapter_gpio_config_index idx)
 	case ADAPTER_GPIO_INIT_STATE_INPUT:
 		INP_GPIO(adapter_gpio_config[idx].gpio_num);
 		break;
+	}
+
+	if (idx == ADAPTER_GPIO_IDX_SRST_SENSE || idx == ADAPTER_GPIO_IDX_PWR_SENSE ||
+			(idx == ADAPTER_GPIO_IDX_SRST && srst_ctrl_also_senses)) {
+		/* Enabling edge detection can lead to unwanted interactions with the OS
+		 * (almost certainly Linux) that can result in Linux hanging. The
+		 * solution is to disable interrupts from the GPIO peripheral when
+		 * sensing srst or power dropout; do so by including
+		 * "dtoverlay=gpio-no-irq" in /boot/config.txt
+		 */
+		if (is_dto_gpio_no_irq_loaded()) {
+			uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+			/* Clear all edge and level detection for this GPIO. */
+			GPIO_GPREN0 &= ~mask;
+			GPIO_GPFEN0 &= ~mask;
+			GPIO_GPHEN0 &= ~mask;
+			GPIO_GPLEN0 &= ~mask;
+			GPIO_GPAREN0 &= ~mask;
+			GPIO_GPAFEN0 &= ~mask;
+
+			if (adapter_gpio_config[idx].active_low) {
+				GPIO_GPLEN0 |= mask;
+				GPIO_GPAFEN0 |= mask;
+			} else {
+				GPIO_GPHEN0 |= mask;
+				GPIO_GPAREN0 |= mask;
+			}
+			GPIO_GPEDS0 = mask; /* Clear any existing event for this GPIO */
+		} else {
+			LOG_WARNING(LOG_PREFIX
+				"refusing to sense inputs when the GPIO peripheral has interrupt handling enabled; try loading the gpio-no-irq device tree overlay");
+		}
 	}
 
 	/* Direction for non push-pull is already set by set_gpio_value() */
@@ -216,7 +309,7 @@ static int bcm2835gpio_reset(int trst, int srst)
 	if (is_gpio_config_valid(ADAPTER_GPIO_IDX_TRST))
 		set_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_TRST], trst);
 
-	LOG_DEBUG("BCM2835 GPIO: bcm2835gpio_reset(%d, %d), trst_gpio: %d %d, srst_gpio: %d %d",
+	LOG_DEBUG(LOG_PREFIX "bcm2835gpio_reset(%d, %d), trst_gpio: %d %d, srst_gpio: %d %d",
 		trst, srst,
 		adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].chip_num, adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].gpio_num,
 		adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].chip_num, adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].gpio_num);
@@ -246,7 +339,7 @@ static int bcm2835_swdio_read(void)
 static int bcm2835gpio_khz(int khz, int *jtag_speed)
 {
 	if (!khz) {
-		LOG_DEBUG("BCM2835 GPIO: RCLK not supported");
+		LOG_DEBUG(LOG_PREFIX "RCLK not supported");
 		return ERROR_FAIL;
 	}
 	*jtag_speed = speed_coeff/khz - speed_offset;
@@ -274,7 +367,7 @@ COMMAND_HANDLER(bcm2835gpio_handle_speed_coeffs)
 		COMMAND_PARSE_NUMBER(int, CMD_ARGV[1], speed_offset);
 	}
 
-	command_print(CMD, "BCM2835 GPIO: speed_coeffs = %d, speed_offset = %d",
+	command_print(CMD, LOG_PREFIX "speed_coeffs = %d, speed_offset = %d",
 				  speed_coeff, speed_offset);
 	return ERROR_OK;
 }
@@ -284,8 +377,25 @@ COMMAND_HANDLER(bcm2835gpio_handle_peripheral_base)
 	if (CMD_ARGC == 1)
 		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], bcm2835_peri_base);
 
-	command_print(CMD, "BCM2835 GPIO: peripheral_base = 0x%08x",
+	command_print(CMD, LOG_PREFIX "peripheral_base = 0x%08x",
 				  bcm2835_peri_base);
+	return ERROR_OK;
+}
+
+COMMAND_HANDLER(bcm2835gpio_handle_gpio_interrupts_file)
+{
+	switch (CMD_ARGC) {
+	case 1:
+		free(gpio_interrupts_file);
+		gpio_interrupts_file = strdup(CMD_ARGV[0]);
+		 __attribute__ ((fallthrough)); /* Fall-through intentional */
+	case 0:
+		command_print(CMD, "BCM2835GPIO: gpio_interrupts_file = %s",
+			gpio_interrupts_file ? gpio_interrupts_file : DEFAULT_GPIO_INTERRUPTS_FILE);
+		break;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
+	}
 	return ERROR_OK;
 }
 
@@ -303,6 +413,13 @@ static const struct command_registration bcm2835gpio_subcommand_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.help = "peripheral base to access GPIOs (RPi1 0x20000000, RPi2 0x3F000000).",
 		.usage = "[base]",
+	},
+	{
+		.name = "gpio_interrupts_file",
+		.handler = &bcm2835gpio_handle_gpio_interrupts_file,
+		.mode = COMMAND_CONFIG,
+		.help = "device tree overlay file listing gpio interrupts.",
+		.usage = "[filename]"
 	},
 
 	COMMAND_REGISTRATION_DONE
@@ -473,6 +590,8 @@ static int bcm2835gpio_init(void)
 
 	initialize_gpio(ADAPTER_GPIO_IDX_SRST);
 	initialize_gpio(ADAPTER_GPIO_IDX_LED);
+	initialize_gpio(ADAPTER_GPIO_IDX_SRST_SENSE);
+	initialize_gpio(ADAPTER_GPIO_IDX_PWR_SENSE);
 
 	return ERROR_OK;
 }
@@ -501,6 +620,8 @@ static int bcm2835gpio_quit(void)
 
 	restore_gpio(ADAPTER_GPIO_IDX_SRST);
 	restore_gpio(ADAPTER_GPIO_IDX_LED);
+	restore_gpio(ADAPTER_GPIO_IDX_SRST_SENSE);
+	restore_gpio(ADAPTER_GPIO_IDX_PWR_SENSE);
 	/* The call to restore_gpio(ADAPTER_GPIO_IDX_PWR_CTRL) is deliberately
 	 * omitted as the target should remain powered. after OpenOCD exits.
 	 */
@@ -509,7 +630,39 @@ static int bcm2835gpio_quit(void)
 	pads_base[BCM2835_PADS_GPIO_0_27_OFFSET] = 0x5A000000 | initial_drive_strength_etc;
 	bcm2835gpio_munmap();
 
+	free(gpio_interrupts_file);
+	gpio_interrupts_file = NULL;
+
 	return ERROR_OK;
+}
+
+static int bcm2835gpio_input_sense(enum adapter_gpio_config_index idx, int *sensed)
+{
+	if (!is_gpio_config_valid(idx)) {
+		*sensed = 0;
+		return ERROR_OK;
+	}
+
+	/* Check if any events occurred since last time; read out all. */
+	uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+	if (GPIO_GPEDS0 & mask) {
+		*sensed = 1;
+		GPIO_GPEDS0 = mask;
+	} else {
+		*sensed = 0;
+	}
+
+	return ERROR_OK;
+}
+
+static int bcm2835gpio_power_dropout(int *power_dropout)
+{
+	return bcm2835gpio_input_sense(ADAPTER_GPIO_IDX_PWR_SENSE, power_dropout);
+}
+
+static int bcm2835gpio_srst_asserted(int *srst_asserted)
+{
+	return bcm2835gpio_input_sense(ADAPTER_GPIO_IDX_SRST_SENSE, srst_asserted);
 }
 
 struct adapter_driver bcm2835gpio_adapter_driver = {
@@ -523,6 +676,8 @@ struct adapter_driver bcm2835gpio_adapter_driver = {
 	.speed = bcm2835gpio_speed,
 	.khz = bcm2835gpio_khz,
 	.speed_div = bcm2835gpio_speed_div,
+	.power_dropout = bcm2835gpio_power_dropout,
+	.srst_asserted = bcm2835gpio_srst_asserted,
 
 	.jtag_ops = &bcm2835gpio_interface,
 	.swd_ops = &bitbang_swd,
