@@ -430,6 +430,9 @@ static int bcm2835gpio_init(void)
 	initial_drive_strength_etc = pads_base[BCM2835_PADS_GPIO_0_27_OFFSET] & 0x1f;
 	pads_base[BCM2835_PADS_GPIO_0_27_OFFSET] = 0x5a000008 + 1;
 
+	/* Apply power first */
+	initialize_gpio(ADAPTER_GPIO_IDX_PWR_CTRL);
+
 	/* Configure JTAG/SWD signals. Default directions and initial states are handled
 	 * by adapter.c and "adapter gpio" command.
 	 */
@@ -498,6 +501,9 @@ static int bcm2835gpio_quit(void)
 
 	restore_gpio(ADAPTER_GPIO_IDX_SRST);
 	restore_gpio(ADAPTER_GPIO_IDX_LED);
+	/* The call to restore_gpio(ADAPTER_GPIO_IDX_PWR_CTRL) is deliberately
+	 * omitted as the target should remain powered. after OpenOCD exits.
+	 */
 
 	/* Restore drive strength. MSB is password ("5A") */
 	pads_base[BCM2835_PADS_GPIO_0_27_OFFSET] = 0x5A000000 | initial_drive_strength_etc;
