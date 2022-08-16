@@ -40,10 +40,24 @@ uint32_t bcm2835_peri_base = 0x20000000;
 #define GPIO_SET (*(pio_base+7))  /* sets   bits which are 1, ignores bits which are 0 */
 #define GPIO_CLR (*(pio_base+10)) /* clears bits which are 1, ignores bits which are 0 */
 #define GPIO_LEV (*(pio_base+13)) /* current level of the pin */
+#define GPIO_GPEDS0 (*(pio_base+16)) /* event detect status 0 */
+#define GPIO_GPREN0 (*(pio_base+19)) /* rising-edge detect enable 0 */
+#define GPIO_GPFEN0 (*(pio_base+22)) /* falling-edge detect enable 0 */
+#define GPIO_GPHEN0 (*(pio_base+25)) /* high detect enable 0 */
+#define GPIO_GPLEN0 (*(pio_base+28)) /* low detect enable 0 */
+#define GPIO_GPAREN0 (*(pio_base+31)) /* asynchronous rising-edge detection (0) */
+#define GPIO_GPAFEN0 (*(pio_base+34)) /* asynchronous falling-edge detection (0) */
 
-static int dev_mem_fd;
-static volatile uint32_t *pio_base = MAP_FAILED;
-static volatile uint32_t *pads_base = MAP_FAILED;
+/* There are various options for sensing: level detection, edge detection, and
+ * asynchronous edge detection. Try asynchronous detection since it should catch
+ * narrow glitches that the pattern-matching edge-detection choices might
+ * reject.
+ */
+#define GPIO_SENSE_LOW GPIO_GPAFEN0
+#define GPIO_SENSE_HIGH GPIO_GPAREN0
+
+static int dev_mem_fd; static volatile uint32_t *pio_base = MAP_FAILED; static
+volatile uint32_t *pads_base = MAP_FAILED;
 
 /* Transition delay coefficients */
 static int speed_coeff = 113714;
@@ -107,6 +121,18 @@ static void restore_gpio(enum adapter_gpio_config_index idx)
 			else
 				GPIO_CLR = 1 << adapter_gpio_config[idx].gpio_num;
 		}
+
+		/* TODO: restore edge and level detection settings for sense inputs? */
+		if (idx == ADAPTER_GPIO_IDX_SRST_SENSE || idx == ADAPTER_GPIO_IDX_PWR_SENSE) {
+			uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+			/* Clear all edge and level detection for this GPIO. */
+			GPIO_GPREN0 &= ~mask;
+			GPIO_GPFEN0 &= ~mask;
+			GPIO_GPHEN0 &= ~mask;
+			GPIO_GPLEN0 &= ~mask;
+			GPIO_GPAREN0 &= ~mask;
+			GPIO_GPAFEN0 &= ~mask;
+		}
 	}
 }
 
@@ -137,6 +163,23 @@ static void initialize_gpio(enum adapter_gpio_config_index idx)
 	case ADAPTER_GPIO_INIT_STATE_INPUT:
 		INP_GPIO(adapter_gpio_config[idx].gpio_num);
 		break;
+	}
+
+	if (idx == ADAPTER_GPIO_IDX_SRST_SENSE || idx == ADAPTER_GPIO_IDX_PWR_SENSE) {
+		uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+		/* Clear all edge and level detection for this GPIO. */
+		GPIO_GPREN0 &= ~mask;
+		GPIO_GPFEN0 &= ~mask;
+		GPIO_GPHEN0 &= ~mask;
+		GPIO_GPLEN0 &= ~mask;
+		GPIO_GPAREN0 &= ~mask;
+		GPIO_GPAFEN0 &= ~mask;
+
+		if (adapter_gpio_config[idx].active_low)
+			GPIO_SENSE_LOW |= mask;
+		else
+			GPIO_SENSE_HIGH |= mask;
+		GPIO_GPEDS0 = mask; /* Clear any existing event for this GPIO */
 	}
 
 	/* Direction for non push-pull is already set by set_gpio_value() */
@@ -471,6 +514,8 @@ static int bcm2835gpio_init(void)
 
 	initialize_gpio(ADAPTER_GPIO_IDX_SRST);
 	initialize_gpio(ADAPTER_GPIO_IDX_LED);
+	initialize_gpio(ADAPTER_GPIO_IDX_SRST_SENSE);
+	initialize_gpio(ADAPTER_GPIO_IDX_PWR_SENSE);
 
 	return ERROR_OK;
 }
@@ -499,11 +544,45 @@ static int bcm2835gpio_quit(void)
 
 	restore_gpio(ADAPTER_GPIO_IDX_SRST);
 	restore_gpio(ADAPTER_GPIO_IDX_LED);
+	restore_gpio(ADAPTER_GPIO_IDX_SRST_SENSE);
+	restore_gpio(ADAPTER_GPIO_IDX_PWR_SENSE);
+
+	/* Keep powered until last possible moment */
 	restore_gpio(ADAPTER_GPIO_IDX_PWR_CTRL);
 
 	bcm2835gpio_munmap();
 
 	return ERROR_OK;
+}
+
+static int bcm2835gpio_input_sense(enum adapter_gpio_config_index idx, int *sensed)
+{
+	if (!is_gpio_config_valid(idx)) {
+		*sensed = 0;
+		return ERROR_OK;
+	}
+
+	/* Check if any events occurred since last time; read out all. */
+	uint32_t mask = (1 << adapter_gpio_config[idx].gpio_num);
+	if (GPIO_GPEDS0 & mask) {
+		*sensed = 1;
+		GPIO_GPEDS0 = mask;
+		LOG_ERROR("BCM2835: %s asserted", adapter_gpio_get_name(idx));
+	} else {
+		*sensed = 0;
+	}
+
+	return ERROR_OK;
+}
+
+static int bcm2835gpio_power_dropout(int *power_dropout)
+{
+	return bcm2835gpio_input_sense(ADAPTER_GPIO_IDX_PWR_SENSE, power_dropout);
+}
+
+static int bcm2835gpio_srst_asserted(int *srst_asserted)
+{
+	return bcm2835gpio_input_sense(ADAPTER_GPIO_IDX_SRST_SENSE, srst_asserted);
 }
 
 struct adapter_driver bcm2835gpio_adapter_driver = {
@@ -517,6 +596,8 @@ struct adapter_driver bcm2835gpio_adapter_driver = {
 	.speed = bcm2835gpio_speed,
 	.khz = bcm2835gpio_khz,
 	.speed_div = bcm2835gpio_speed_div,
+	.power_dropout = bcm2835gpio_power_dropout,
+	.srst_asserted = bcm2835gpio_srst_asserted,
 
 	.jtag_ops = &bcm2835gpio_interface,
 	.swd_ops = &bitbang_swd,
