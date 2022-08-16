@@ -428,6 +428,9 @@ static int bcm2835gpio_init(void)
 	/* set 4mA drive strength, slew rate limited, hysteresis on */
 	pads_base[BCM2835_PADS_GPIO_0_27_OFFSET] = 0x5a000008 + 1;
 
+	/* Apply power first */
+	initialize_gpio(ADAPTER_GPIO_IDX_PWR_CTRL);
+
 	/* Configure JTAG/SWD signals. Default directions and initial states are handled
 	 * by adapter.c and "adapter gpio" command.
 	 */
@@ -496,6 +499,7 @@ static int bcm2835gpio_quit(void)
 
 	restore_gpio(ADAPTER_GPIO_IDX_SRST);
 	restore_gpio(ADAPTER_GPIO_IDX_LED);
+	restore_gpio(ADAPTER_GPIO_IDX_PWR_CTRL);
 
 	bcm2835gpio_munmap();
 
